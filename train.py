@@ -40,6 +40,7 @@ class PlaceDataset(Dataset):
             input_text,
             add_special_tokens=True,
             max_length=self.max_len,
+            truncation=True,
             return_token_type_ids=False,
             pad_to_max_length=True,
             return_attention_mask=True,
@@ -74,14 +75,14 @@ def create_data_loader(df, tokenizer, max_len, batch_size):
     ds = PlaceDataset(
         dataframe=df,
         tokenizer=tokenizer,
-        max_len=max_len,
-        truncation=True
+        max_len=max_len
+
     )
     return DataLoader(ds, batch_size=batch_size, num_workers=4)
 
 
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-MAX_LEN = 128
+MAX_LEN = 512
 BATCH_SIZE = 16
 N_CLASSES = len(data.Title.unique())
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -89,9 +90,9 @@ train_data_loader = create_data_loader(data, tokenizer, MAX_LEN, BATCH_SIZE)
 model = TransformerPlaceModel(N_CLASSES)
 model = model.to(device)
 
-EPOCHS = 10
+EPOCHS = 20
 
-optimizer = optim.Adam(model.parameters(), lr=2e-5)
+optimizer = optim.Adam(model.parameters(), lr=2e-4)
 criterion = nn.CrossEntropyLoss().to(device)
 
 for epoch in range(EPOCHS):
@@ -113,7 +114,7 @@ for epoch in range(EPOCHS):
 torch.save(model.state_dict(), 'model.pth')
 
 
-def suggest_place(description):
+def suggest_places(description, num_suggestions=3):
     encoding = tokenizer.encode_plus(
         description,
         add_special_tokens=True,
@@ -128,12 +129,18 @@ def suggest_place(description):
     attention_mask = encoding['attention_mask'].to(device)
 
     outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-    _, prediction = torch.max(outputs, dim=1)
+    probs = nn.Softmax(dim=1)(outputs)
 
-    return data.Title.iloc[prediction.item()]
+    # Get the top N predictions
+    top_n_probs, top_n_indices = torch.topk(probs, num_suggestions, dim=1)
+
+    # Get the titles corresponding to the top N predictions
+    suggestions = data.Title.iloc[top_n_indices.squeeze().tolist()]
+
+    return suggestions
 
 
 # Example usage
-description = "A beautiful place with mountains and lakes"
-suggested_place = suggest_place(description)
-print(suggested_place)
+description = "A beautiful place with mountains and lakes, where i can go to hiking. and also i want to visit some ancient places near by. "
+suggested_places = suggest_places(description, num_suggestions=4)
+print(suggested_places)
